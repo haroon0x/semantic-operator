@@ -30,11 +30,11 @@ var ErrResultIncomplete = errors.New("result is incomplete at the default row li
 // a complete answer from a truncated one. Reporting says so plainly while
 // still returning the rows.
 //
-// Every query probes one row past its effective limit, so Query can
-// distinguish a complete result from a larger one it must flag. A request
-// that names no limit uses DefaultRowLimit as its effective limit. An
-// explicit limit is the caller's intent and so is honored up to MaxRowLimit,
-// with the same one-row probe on top.
+// Every statement fetches one row past its effective limit, so Query can
+// distinguish a complete result from a larger one it must flag. apply fills
+// in the effective limit, the caller's value or the default, and that is the
+// request external authorization sees. Service.Plan adds the probe after the
+// policy has decided, so the extra row never reaches a limit-bounding policy.
 type Limits struct {
 	// DefaultRowLimit applies when a request names no limit.
 	DefaultRowLimit int
@@ -143,9 +143,12 @@ func (l Limits) withDefaults() Limits {
 	return l
 }
 
-// apply validates the request shape and returns it with the row limit filled
-// in. It runs before the plan cache key is computed, so the key covers the
-// effective limit.
+// apply validates the request shape and returns it with the effective row
+// limit filled in: the caller's value, or the default when none was named. It
+// runs before the plan cache key is computed, so the key covers the effective
+// limit. It is also the request external authorization sees: Service.Plan
+// adds the one-row execution probe on top only after the policy has decided,
+// so a policy bounding limits at N sees N, not N+1.
 func (l Limits) apply(req planner.Request) (planner.Request, error) {
 	l = l.withDefaults()
 
@@ -169,16 +172,11 @@ func (l Limits) apply(req planner.Request) (planner.Request, error) {
 	case req.Limit < 0:
 		return req, fmt.Errorf("%w: limit must not be negative", ErrRequestTooLarge)
 	case req.Limit == 0:
-		// Probe one row past the default so Query can flag a larger result.
-		req.Limit = l.DefaultRowLimit + 1
+		// The default is the effective limit. The probe row past it is the
+		// execution detail Service.Plan adds when the statement is built.
+		req.Limit = l.DefaultRowLimit
 	case req.Limit > l.MaxRowLimit:
 		return req, fmt.Errorf("%w: limit %d exceeds the maximum of %d", ErrRequestTooLarge, req.Limit, l.MaxRowLimit)
-	default:
-		// Probe one row past the explicit limit so Query can report
-		// truncation instead of silently returning a prefix. The extra row
-		// is stripped before the response, so the caller never sees more
-		// than requested.
-		req.Limit++
 	}
 	return req, nil
 }

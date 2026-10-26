@@ -287,10 +287,17 @@ func (s *Service) Plan(ctx context.Context, adapter string, m *planner.CompiledM
 		authorizationFingerprint = authorization.Fingerprint(ext.ProviderRef, input.Identity, decision)
 	}
 
+	// The statement fetches one probe row past the effective limit so Query
+	// can prove truncation and strip the extra row. The probe is added after
+	// external authorization: a policy bounding limits decides on the request
+	// the caller made, and a cap of N must not reject a request for N.
+	planReq := req
+	planReq.Limit++
+
 	// Keyed on the whole identity, roles and claims both. Roles alone would
 	// let two tenants sharing a role collide on one compiled plan.
 	key := cache.PlanKey(s.Dialect.Name(), m.Name, m.Version,
-		planner.RequestHash(req, governance.IdentityKey(m.Governance, id)), authorizationFingerprint)
+		planner.RequestHash(planReq, governance.IdentityKey(m.Governance, id)), authorizationFingerprint)
 	if blob, ok := s.Cache.GetPlan(ctx, key); ok {
 		var p planner.Plan
 		if err := json.Unmarshal(blob, &p); err == nil && p.AuthorizationFingerprint == authorizationFingerprint {
@@ -298,7 +305,7 @@ func (s *Service) Plan(ctx context.Context, adapter string, m *planner.CompiledM
 			return &p, true, nil
 		}
 	}
-	p, err := planner.Build(m, s.Dialect, req, id)
+	p, err := planner.Build(m, s.Dialect, planReq, id)
 	if err != nil {
 		return nil, false, err
 	}

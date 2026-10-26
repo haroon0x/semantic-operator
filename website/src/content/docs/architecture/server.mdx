@@ -75,7 +75,8 @@ A model can also name an external provider, OPA or Ranger. It adds a second gate
 replaces the built-in policy. Because the provider is consulted before any cache lookup, a
 cached plan or result cannot bypass its decision, and an unavailable or unclear provider
 fails closed rather than falling back to allow. The provider evaluates the request and
-identity, and never receives SQL or raw metric expressions.
+identity, and never receives SQL, raw metric expressions, or the probe row past the
+effective limit.
 
 | Provider result | Outcome |
 |---|---|
